@@ -1,0 +1,26 @@
+{
+  "name": "paull",
+  "version": "1.0.0",
+  "description": "Paull is a poll bot.",
+  "main": "paull.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/symsym-1629/Paull-cmds.git"
+  },
+  "keywords": [
+    "poll"
+  ],
+  "author": "BastLast_",
+  "license": "SEE LICENCE IN LICENCE",
+  "bugs": {
+    "url": "https://github.com/symsym-1629/Paull-cmds/issues"
+  },
+  "homepage": "https://github.com/symsym-1629/Paull-cmds#readme",
+  "dependencies": {
+    "discord.js": "^14.3.0",
+    "sqlite": "^3.0.6"
+  }
+}
