@@ -1,8 +1,10 @@
-const {EmbedBuilder, Client, GatewayIntentBits} = require("discord.js");
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const {EmbedBuilder, Client, GatewayIntentBits, Partials, CommandInteractionOptionResolver} = require("discord.js");
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMessageReactions],
+  'partials': [Partials.Channel] });
 const Config = require('./config');
 const sql = require("sqlite");
 const embed = new EmbedBuilder();
+const prefix = "?s";
 
 sql.open("./database.sqlite");
 
@@ -14,16 +16,81 @@ client.on("ready", () => {
 });
 
 /**
+ * Will be executed each time the bot see a message
+ */
+ client.on("messageCreate", async (message) => {
+
+  if (message.mentions.users.last() && message.mentions.users.last().id == client.user.id) {
+    let embed = new EmbedBuilder();
+    embed.setTitle(":information_source: Je suis maintenant en slash command !");
+    embed.setDescription("Si vous avez besoin de plus d'assistance, rejoignez le discord d'aide : https://discord.gg/GWTFMQv");
+    message.channel.send({embeds: [embed]});
+  }
+});
+
+client.on("interactionCreate", async (interaction) => {
+  if (argsIsNotValid(interaction)) {
+    return sendArgsErrorMessage(interaction);
+  }
+
+  let msg = await repostTheQuestion(interaction);
+  await addReactions(interaction, msg);
+  saveNewPoll(interaction, msg);
+});
+
+/**
+ * Will be executed each time the bot see a new reaction
+ */
+client.on("messageReactionAdd", async (reaction) => {
+  if (reactionIsOnApoll(reaction)) {
+    let pollexist = await sql.get(`SELECT count(*) as number from poll where messageId = ${reaction.message.id}`);
+    if (pollexist.number != 1) {
+      embed.setTitle(":x: Erreur !");
+      embed.setColor("#D92D43");
+      embed.setDescription("Ce sondage est terminé !");
+      return reaction.users.cache.last().send(embed);
+    }
+    deleteLastReaction(reaction);
+    if (reaction.me) { // test if the reaction is part of the poll
+      //if so, add it to the database
+      if (reaction.emoji.name == "📜") {
+        let pollauthorid = await sql.get(`select authorId as id from poll where messageId = ${reaction.message.id}`);
+        if (reaction.users.cache.last().id == pollauthorid.id) {
+
+          sendingResults(reaction);
+
+        } else {
+          errorStopingPoll(reaction);
+        }
+        return;
+      }
+      let numberOfVoteByThisUserOnThisPoll = await getNumberOfVote(reaction);
+      if (numberOfVoteByThisUserOnThisPoll == 0) {
+        saveVote(reaction);
+        confirmVote(reaction);
+      } else {
+        updateVote(reaction);
+        confirmChangeVote(reaction);
+      }
+      await updatePollMessage(reaction);
+    }
+  }
+});
+
+/**
  * used ot get the amount of vote on a poll and edit the message
  * @param {*} reaction 
  */
  async function updatePollMessage(reaction) {
-  let embedToEdit = reaction.message.embeds[0];
-  console.log(embedToEdit);
+  let embedToEdit = reaction.message.embeds[0].from;
+  let title = reaction.message.embeds[0].title
   let number = await sql.get(`select count(*) as number from vote where pollId = ${reaction.message.id}`).catch(console.error);
   number = number.number;
+  embedToEdit = new EmbedBuilder;
   embedToEdit.setDescription("Utilisez les réactions ci-dessous pour répondre à la question. Utilisez la réaction 📜 pour visionner les résultats si vous êtes l'initiateur du sondage\n\n" + number + " vote(s) reçu(s).");
-  reaction.message.edit(embedToEdit);
+  embedToEdit.setTitle(`${title}`);
+  embedToEdit.setColor("#006D68")
+  reaction.message.edit({embeds: [embedToEdit]});
 }
 
 /**
@@ -39,7 +106,7 @@ async function sendingResults(reaction) {
   } else {
     await displayResultForDualChoicePoll(reaction, resultsEmbed);
   }
-  reaction.message.channel.send(resultsEmbed);
+  reaction.message.channel.send({embeds: [resultsEmbed]});
   await sql.get(`delete from poll where messageId = ${reaction.message.id}`);
   await sql.get(`delete from vote where pollId = ${reaction.message.id}`);
 }
@@ -59,9 +126,9 @@ async function getPoll(reaction) {
  */
 async function displayResultForDualChoicePoll(reaction, resultsEmbed) {
   let votes = await sql.get(`select count(*) as r from vote where pollId = ${reaction.message.id} and vote = "✅"`);
-  resultsEmbed.addField("Option : :white_check_mark:", "Nombre de votes : " + votes.r);
+  resultsEmbed.addFields({name: "Option : :white_check_mark:", value: "Nombre de votes : " + votes.r});
   votes = await sql.get(`select count(*) as r from vote where pollId = ${reaction.message.id} and vote = "❌"`);
-  resultsEmbed.addField("Option : :x:", "Nombre de votes : " + votes.r);
+  resultsEmbed.addFields({name: "Option : :x:", value:  "Nombre de votes : " + votes.r});
 }
 
 /**
@@ -85,7 +152,7 @@ async function displayResultForMultichoicePoll(results, reaction, resultsEmbed) 
   };
   for (let i = 1; i <= results.numberOfOptions; i++) {
     let votes = await sql.get(`select count(*) as r from vote where pollId = ${reaction.message.id} and vote = "${array[i]}"`);
-    resultsEmbed.addField("Option : " + array[i], "Nombre de votes : " + votes.r);
+    resultsEmbed.addFields({name: "Option : " + array[i], value: "Nombre de votes : " + votes.r});
   }
 }
 
@@ -94,7 +161,7 @@ async function displayResultForMultichoicePoll(results, reaction, resultsEmbed) 
  * @param {*} reaction 
  */
 function generateEmbedBegining(reaction) {
-  let resultsEmbed = new Discord.MessageEmbed();
+  let resultsEmbed = new EmbedBuilder();
   resultsEmbed.setTitle(":scroll: Resultat du sondage : ");
   resultsEmbed.setColor("#FFD983");
   resultsEmbed.setDescription("Cliquez ici pour retrouver le sondage : \n" + reaction.message.url);
@@ -121,7 +188,7 @@ function confirmChangeVote(reaction) {
   embed.setTitle(":information_source: Votre vote a été modifié !");
   embed.setColor("#3B88C3");
   embed.setDescription("Vous votez désormais pour l'option " + reaction.emoji.name + ". Pour modifier (encore ?!) votre vote, cliquez sur un autre choix.");
-  reaction.users.cache.last().send(embed);
+  reaction.users.cache.last().send({embeds: [embed]});
 }
 
 /**
@@ -132,7 +199,7 @@ function confirmVote(reaction) {
   embed.setTitle(":white_check_mark: Votre vote a été enregistré !");
   embed.setColor("#77B255");
   embed.setDescription("Vous avez voté pour l'option " + reaction.emoji.name + ". Pour modifier votre vote, cliquez sur un autre choix.");
-  reaction.users.cache.last().send(embed);
+  reaction.users.cache.last().send({embeds: [embed]});
 }
 
 async function getNumberOfVote(reaction) {
@@ -175,36 +242,34 @@ function updateVote(reaction) {
 
 /**
  * Create the poll message
- * @param {*} message 
- * @param {*} args 
+ * @param {*} interaction 
  */
-async function repostTheQuestion(message, args) {
-  let question = getQuestion(message, args);
+async function repostTheQuestion(interaction) {
+  let question = getQuestion(interaction);
   embed.setTitle(question);
   embed.setColor("#006D68");
   embed.setDescription("Utilisez les réactions ci-dessous pour répondre à la question. Utilisez la réaction 📜 pour visionner les résultats si vous êtes l'initiateur du sondage.");
   let msg;
   try {
-    msg = await message.channel.send(embed);
+    msg = await interaction.reply({embeds: [embed], fetchReply: true});
   }
   catch{
     embed.setTitle(":x: Erreur !");
     embed.setColor("#D92D43");
     embed.setDescription("La taille limite d'une question est de 256 caractères.");
-    msg = await message.channel.send(embed);
+    msg = await interaction.reply({embeds: [embed]});
   }
-  message.delete();
   return msg;
 }
 
 /**
  * add the reactions under the message
- * @param {*} args 
+ * @param {*} interaction 
  * @param {*} msg 
  */
-async function addReactions(args, msg) {
-  if (isANumberPoll(args)) {
-    await reactWithNumber(args, msg);
+async function addReactions(interaction, msg) {
+  if (isANumberPoll(interaction)) {
+    await reactWithNumber(interaction, msg);
   }
   else {
     await reactWithYesNo(msg);
@@ -214,76 +279,56 @@ async function addReactions(args, msg) {
 
 /**
  * Save a new poll in the database
- * @param {*} message 
+ * @param {*} interaction 
  * @param {*} msg
- * @param {*} args 
  */
-function saveNewPoll(message, msg, args) {
-  sql.run(`INSERT INTO poll (messageId, time, numberOfOptions,authorId) VALUES (${msg.id},${message.createdTimestamp},${args[0]},${message.author.id}) `).catch(console.error);
+function saveNewPoll(interaction, msg) {
+  sql.run(`INSERT INTO poll (messageId, time, numberOfOptions,authorId) VALUES (${msg.id},${interaction.createdTimestamp},${interaction.options.getInteger('choices')},${interaction.user.id}) `).catch(console.error);
 }
 
 /**
  * get the question in a string
- * @param {*} message 
- * @param {*} args 
+ * @param {*} interaction 
  */
-function getQuestion(message, args) {
-  return message.content.slice(prefix.length).trim().slice(args[0].length);
-}
-
-/**
- * get an array of the args of the command
- * @param {*} message 
- */
-function getArgs(message) {
-  return message.content.slice(prefix.length).trim().split(/ +/g);
+function getQuestion(interaction) {
+  return interaction.options.getString('question');
 }
 
 /**
  * display an error
- * @param {*} message 
+ * @param {*} interaction 
  */
-async function sendArgsErrorMessage(message) {
+async function sendArgsErrorMessage(interaction) {
   embed.setTitle(":x: Erreur !");
   embed.setColor("#D92D43");
   embed.setDescription("Veuillez choisir un nombre d'options compris entre 2 et 10 : `?s [nombre d'option] Question`");
-  return message.channel.send(embed);
-}
-
-/**
- * display an error
- * @param {*} message 
- */
-async function sendQuestionErrorMessage(message) {
-  embed.setTitle(":x: Erreur !");
-  embed.setColor("#D92D43");
-  embed.setDescription("Veuillez indiquer une question : `?s [nombre d'option] Question`");
-  return message.channel.send(embed);
+  return interaction.reply({embeds: [embed]});
 }
 
 /**
  * test the validitu of the args
- * @param {*} args 
+ * @param {*} interaction 
  */
-function argsIsNotValid(args) {
-  return parseInt(args[0]) < 2 || parseInt(args[0]) > 10 || isNaN(parseInt(args[0]));
+function argsIsNotValid(interaction) {
+  const option = interaction.options.getInteger('choices')
+  return parseInt(option) < 2 || parseInt(option) > 10 || isNaN(parseInt(option));
 }
 
 /**
  * test if the bot has a two choice poll
- * @param {*} message 
+ * @param {*} msg 
  */
-async function reactWithYesNo(message) {
-  await message.react("✅");
-  await message.react("❌");
+async function reactWithYesNo(msg) {
+  await msg.react("✅");
+  await msg.react("❌");
 }
 
 /**
- * React with numbers to the message
- * @param {*} args 
- * @param {*} message 
+ * React with numbers to the message 
+ * @param {*} interaction 
+ * @param {*} msg
  */
-async function reactWithNumber(args, message) {
+async function reactWithNumber(interaction, msg) {
   let = array = {
     "0": "1️⃣",
     "1": "2️⃣",
@@ -296,17 +341,18 @@ async function reactWithNumber(args, message) {
     "8": "9️⃣",
     "9": "🔟"
   };
-  for (let i = 0; i < args[0]; i++) {
-    await message.react(array[i]);
+  for (let i = 0; i < interaction.options.getInteger('choices'); i++) {
+    await msg.react(array[i]);
   }
 }
 
 /**
  * test if a poll is a number poll
- * @param {*} args 
+ * @param {*} interaction 
  */
-function isANumberPoll(args) {
-  return args[0] < 11 && args[0] > 2;
+function isANumberPoll(interaction) {
+  const option = interaction.options.getInteger('choices');
+  return option < 11 && option > 2;
 }
 
   /**
