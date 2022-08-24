@@ -13,13 +13,13 @@ Paull est un petit bot français de sondage anonymes très simple
 
 # Lancer un sondage :
 
-?s [Nombre d'options] [question]
+/poll [Nombre d'options] [question]
 
 # Exemples :
 
-?s 2 Est-ce que les pandas sont mignons ?
+/poll 2 Est-ce que les pandas sont mignons ?
 
-?s 4 De quel couleur est le cheval blanc d'henri IV ? 1: Blanc, 2: Vert, 3 Mauve, 4 Violet
+/poll 4 De quel couleur est le cheval blanc d'henri IV ? 1: Blanc, 2: Vert, 3 Mauve, 4 Violet
 
 # Quel est l'intérêt de ce bot par rapport aux autres bots de sondage ?
 
