@@ -12,7 +12,7 @@ client.on("ready", () => {
     console.log("Bot démarré :) " + client.guilds.cache.size + " serveurs !");
     createDatabase(sql);
     client.user
-    .setPresence({ activities: [{ name: '?s 2 Vous allez bien ?' }], status: 'online' })
+    .setPresence({ activities: [{ name: '/poll 2 Vous allez bien ?' }], status: 'online' })
 });
 
 /**
